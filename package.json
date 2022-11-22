@@ -1,0 +1,25 @@
+{
+  "name": "git-lession",
+  "version": "1.0.0",
+  "description": "Hay this is master branch this is another change",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RAHUL1115/git-lessions.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/RAHUL1115/git-lessions/issues"
+  },
+  "homepage": "https://github.com/RAHUL1115/git-lessions#readme",
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "pg": "^8.8.0"
+  }
+}
