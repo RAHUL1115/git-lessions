@@ -3,7 +3,6 @@ const fs = require("fs");
 const pgClient = require("pg").Client;
 const Cursor = require("pg-cursor");
 const csv = require("fast-csv");
-const QueryStream = require("pg-query-stream");
 
 const config = {
   host: process.env.DB_HOST,
@@ -18,28 +17,25 @@ const client = new pgClient(config);
 (async () => {
   try {
     await client.connect();
-    let batchSize = 100000
+    let writeStream = fs.createWriteStream("./output.csv");
+    let batchSize = 100
+    
 
-    let query = `SELECT *, EXTRACT(MILLISECONDS FROM statement_timestamp()) AS current_ms FROM "Million" LIMIT 100000;`;
-    // let query = `SELECT *, EXTRACT(MILLISECONDS FROM current_timestamp) AS current_ms FROM "Million" LIMIT 100000;`;
-    // let query = `SELECT *, statement_timestamp()::Varchar AS current_ms FROM "Million" LIMIT 100000;`;
-    // let query = `SELECT *, current_timestamp()::Varchar AS current_ms FROM "Million" LIMIT 100000;`;
-    const qs = new QueryStream(query);
-    console.log(qs);
+    // let query = `SELECT *, statement_timestamp() AS timestamp FROM "Million";`;
+    let query = `SELECT *, current_timestamp AS timestamp FROM "Million";`;
 
 
     const cursor = client.query(new Cursor(query));
     
     // csvStream
     const csvStream = csv.format({ headers: true }).transform((row) => ({
-      current_ms : row.current_ms,
       name: row.name,
-      joindate: row.joindate,
-      currentdate: new Date(),
+      joindate: row.joindate.toJSON(),
+      timestamp : row.timestamp.toJSON(),
+      currentdate: (new Date()).toJSON(),
     }));
 
     // create fs writable stream
-    var writeStream = fs.createWriteStream("./output2.csv");
     csvStream.pipe(writeStream);
     
     // streaming data through csv stream
