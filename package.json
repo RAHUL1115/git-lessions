@@ -23,6 +23,7 @@
     "fast-csv": "^4.3.6",
     "fs-extra": "^10.1.0",
     "pg": "^8.8.0",
-    "pg-cursor": "^2.7.4"
+    "pg-cursor": "^2.7.4",
+    "pg-query-stream": "^4.2.4"
   }
 }
