@@ -20,12 +20,23 @@ const client = new pgClient(config);
     let writeStream = fs.createWriteStream("./output.csv");
     let batchSize = 100
     
+    let createQuery = `CREATE TABLE IF NOT EXISTS "Million" (name character varying(255) COLLATE pg_catalog."default", joindate date );`
+
+    await client.query(createQuery);
+
+    let truncateQuery = `TRUNCATE "Million";`
+
+    await client.query(createQuery);
+
+    let insertQuery = `INSERT INTO "Million" (name, joindate) SELECT substr(md5(random()::text), 1, 10), DATE '2018-01-01' + (random() * 700)::integer FROM generate_series(1, 100000);`
+
+    await client.query(insertQuery);
 
     // let query = `SELECT *, statement_timestamp() AS timestamp FROM "Million";`;
-    let query = `SELECT *, current_timestamp AS timestamp FROM "Million";`;
+    let selectQuery = `SELECT *, current_timestamp AS timestamp FROM "Million";`;
 
 
-    const cursor = client.query(new Cursor(query));
+    const cursor = client.query(new Cursor(selectQuery));
     
     // csvStream
     const csvStream = csv.format({ headers: true }).transform((row) => ({
@@ -51,6 +62,7 @@ const client = new pgClient(config);
     csvStream.end();
     cursor.close();
     client.end();
+    console.log("done");
   } catch (error) {
     console.error(error);
   }

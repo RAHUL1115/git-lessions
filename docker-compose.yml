@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  node:
+    container_name: node-pg-stream
+    build: .
+    restart: always
+    depends_on:
+      - pg
+  pg:
+    container_name: postgres
+    image: postgres
+    ports:
+      - '5433:${DB_PORT}'
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
