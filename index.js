@@ -1,4 +1,4 @@
-// require("dotenv").config();
+require("dotenv").config();
 const fs = require("fs");
 const pgClient = require("pg").Client;
 const QueryStream = require("pg-query-stream");
@@ -131,7 +131,8 @@ function withStream(client,filename) {
     await withoutTransaction(client,'./output/withoutTransaction.csv');
     await withStream(client,'./output/stream.csv');
 
-    client.end();
+    // client.end();
+    console.log('done');
   } catch (error) {
     console.error(error);
   }
