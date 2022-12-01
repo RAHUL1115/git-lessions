@@ -1,3 +1,4 @@
 sql.sql
 Dockerfile
 docker-compose.yml
+output/

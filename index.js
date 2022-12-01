@@ -4,7 +4,9 @@ require("dotenv").config({
 const fs = require("fs");
 const pgClient = require("pg").Client;
 const QueryStream = require("pg-query-stream");
+const Cursor = require("pg-cursor");
 const csv = require("fast-csv");
+const { response } = require("express");
 
 const config = {
   host: process.env.DB_HOST || "localhost",
@@ -16,43 +18,28 @@ const config = {
 
 const client = new pgClient(config);
 
-function withTransaction(client, filename) {
+function init(client) {
   return new Promise(async (resolve, reject) => {
-    await client.query("BEGIN");
     try {
-      const writeStream = fs.createWriteStream(filename);
-      const csvStream = csv
-        .format({ headers: true })
-        .transform((row) => ({
-          name: row.name,
-          joindate: row.joindate.toJSON(),
-          current_ts: row.current_ts.toJSON(),
-          statement_ts: row.statement_ts.toJSON(),
-        }))
-        .on("end", () => {
-          writeStream.end();
-          resolve();
-        });
+      await client.connect();
 
-      csvStream.pipe(writeStream);
+      let createQuery = `CREATE TABLE IF NOT EXISTS "Million" (name character varying(255) COLLATE pg_catalog."default", joindate date );`;
+      await client.query(createQuery);
 
-      console.time("withTransaction");
-      for (let i = 0; i < 5; i++) {
-        const response = await client.query(
-          `SELECT *, current_timestamp AS current_ts, statement_timestamp() AS statement_ts FROM "Million" OFFSET ${
-            100 * i
-          } LIMIT 100;`
-        );
-        response.rows.forEach((row) => {
-          csvStream.write(row);
-        });
+      let truncateQuery = `TRUNCATE "Million";`;
+      await client.query(truncateQuery);
+
+      let insertQuery = `INSERT INTO "Million" (name, joindate) SELECT substr(md5(random()::text), 1, 10), DATE '2018-01-01' + (random() * 700)::integer FROM generate_series(1, ${length});`;
+      await client.query(insertQuery);
+
+      if (!fs.existsSync("./output")) {
+        fs.mkdirSync("./output");
       }
-      console.timeEnd("withTransaction");
 
-      await client.query("COMMIT");
-      csvStream.end();
-    } catch (err) {
-      await client.query("ROLLBACK");
+      resolve();
+    } catch (error) {
+      console.log('rej');
+      reject(error);
     }
   });
 }
@@ -60,50 +47,88 @@ function withTransaction(client, filename) {
 function withoutTransaction(client, filename) {
   return new Promise(async (resolve, reject) => {
     try {
+      // * define streams
       const writeStream = fs.createWriteStream(filename);
-      const csvStream = csv
-        .format({ headers: true })
-        .transform((row) => ({
-          name: row.name,
-          joindate: row.joindate.toJSON(),
-          current_ts: row.current_ts.toJSON(),
-          statement_ts: row.statement_ts.toJSON(),
-        }))
-        .on("end", () => {
-          writeStream.end();
-          resolve();
-        });
-
+      const csvStream = csv.format({ headers: true }).transform((row) => ({
+        name: row.name,
+        joindate: row.joindate.toJSON(),
+        current_ts: row.current_ts.toJSON(),
+        statement_ts: row.statement_ts.toJSON(),
+      }));
       csvStream.pipe(writeStream);
 
       console.time("withoutTransaction");
-      for (let i = 0; i < 5; i++) {
+      let i = 0;
+      let rows = [null];
+      while (rows.length) {
         const response = await client.query(
-          `SELECT *, current_timestamp AS current_ts, statement_timestamp() AS statement_ts FROM "Million" OFFSET ${
-            100 * i
-          } LIMIT 100;`
+          `${baseQuery} OFFSET ${100 * i} LIMIT ${batchSize};`
         );
-        response.rows.forEach((row) => {
+        rows = response.rows;
+        rows.forEach((row) => {
           csvStream.write(row);
         });
+        i++;
       }
       console.timeEnd("withoutTransaction");
 
       csvStream.end();
-    } catch (err) {}
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function withTransaction(client, filename) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // * define streams
+      const writeStream = fs.createWriteStream(filename);
+      const csvStream = csv.format({ headers: true }).transform((row) => ({
+        name: row.name,
+        joindate: row.joindate.toJSON(),
+        current_ts: row.current_ts.toJSON(),
+        statement_ts: row.statement_ts.toJSON(),
+      }));
+      csvStream.pipe(writeStream);
+
+      console.time("withTransaction");
+      await client.query("BEGIN");
+      let rows = [null];
+      let i = 0;
+      while (rows.length) {
+        const response = await client.query(
+          `${baseQuery} OFFSET ${100 * i} LIMIT ${batchSize};`
+        );
+        rows = response.rows;
+        rows.forEach((row) => {
+          csvStream.write(row);
+        });
+        i++;
+      }
+      await client.query("COMMIT");
+
+      console.timeEnd("withTransaction");
+      csvStream.end();
+      writeStream.end();
+      resolve();
+    } catch (err) {
+      await client.query("ROLLBACK");
+      reject(err);
+    }
   });
 }
 
 function withStream(client, filename) {
   return new Promise(async (resolve, reject) => {
     try {
-      const writeStream = fs.createWriteStream(filename);
+      let selectQuery = `${baseQuery};`;
+      // let selectQuery = `SELECT *, current_timestamp AS current_ts, statement_timestamp() AS statement_ts FROM "Million" LIMIT 500;`;
 
       console.time("withStream");
-      // let selectQuery = `SELECT m1.name, m1.joindate, current_timestamp AS current_ts, statement_timestamp() AS statement_ts FROM "Million" m1 INNER JOIN "Million" m2 ON m1.name = m2.name;`;
-      let selectQuery = `SELECT *, current_timestamp AS current_ts, statement_timestamp() AS statement_ts FROM "Million" LIMIT 500;`;
+      const writeStream = fs.createWriteStream(filename);
       const stream = client.query(new QueryStream(selectQuery));
-
       stream
         .pipe(csv.format({ headers: true }))
         .transform((row, next) => {
@@ -115,40 +140,118 @@ function withStream(client, filename) {
           });
         })
         .pipe(writeStream);
-
       stream.on("end", () => {
         console.timeEnd("withStream");
         writeStream.end();
         resolve();
       });
-    } catch (err) {}
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
+function withCursor(client, filename) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // * define streams
+      const writeStream = fs.createWriteStream(filename);
+      const csvStream = csv.format({ headers: true }).transform((row) => ({
+        name: row.name,
+        joindate: row.joindate.toJSON(),
+        current_ts: row.current_ts.toJSON(),
+        statement_ts: row.statement_ts.toJSON(),
+      }));
+      csvStream.pipe(writeStream);
+
+      // * queryStream and write in queryStream
+      console.time("withCursor");
+      await client.query("BEGIN;");
+      await client.query(`DECLARE million_cur CURSOR FOR ${baseQuery};`);
+      let rows = [null];
+      while (rows.length) {
+        let response = await client.query(
+          `FETCH ${batchSize} FROM million_cur;`
+        );
+        rows = response.rows;
+        rows.forEach((row) => {
+          csvStream.write(row);
+        });
+      }
+      await client.query("COMMIT;");
+
+      // * post-process cleanup
+      console.timeEnd("withCursor");
+      csvStream.end();
+      writeStream.end();
+      resolve();
+    } catch (err) {
+      await client.query("ROLLBACK");
+      reject(err);
+    }
+  });
+}
+
+function withCursorModule(client, filename) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // * define streams
+      const writeStream = fs.createWriteStream(filename);
+      const csvStream = csv.format({ headers: true }).transform((row) => ({
+        name: row.name,
+        joindate: row.joindate.toJSON(),
+        current_ts: row.current_ts.toJSON(),
+        statement_ts: row.statement_ts.toJSON(),
+      }));
+      csvStream.pipe(writeStream);
+
+      // * query and stream write
+      console.time("withCursorModule");
+      let cursor = await client.query(new Cursor(`${baseQuery};`));
+
+      let rows = [null];
+      while (rows.length) {
+        rows = await cursor.read(batchSize);
+        rows.forEach((row) => {
+          csvStream.write(row);
+        });
+      }
+
+      // * post-process cleanup
+      console.timeEnd("withCursorModule");
+      csvStream.end();
+      writeStream.end();
+      cursor.close();
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+const baseQuery = `SELECT m1.name, m1.joindate, current_timestamp AS current_ts, statement_timestamp() AS statement_ts FROM "Million" m1 INNER JOIN "Million" m2 ON m1.name = m2.name`;
+const batchSize = 100;
+const length = 3000000;
 (async () => {
   try {
-    await client.connect();
+    // * initialize the client connection and create basic setups
+    await init(client);
 
-    let createQuery = `CREATE TABLE IF NOT EXISTS "Million" (name character varying(255) COLLATE pg_catalog."default", joindate date );`;
-    await client.query(createQuery);
+    // await withoutTransaction(client, "./output/withoutTransaction.csv");
+    // await withTransaction(client, "./output/withTransaction.csv");
+    // await withCursor(client, "./output/cursor.csv");
+    // await withStream(client, "./output/stream.csv");
+    await withCursorModule(client, "./output/cursorModule.csv");
 
-    let truncateQuery = `TRUNCATE "Million";`;
-    await client.query(truncateQuery);
-
-    let insertQuery = `INSERT INTO "Million" (name, joindate) SELECT substr(md5(random()::text), 1, 10), DATE '2018-01-01' + (random() * 700)::integer FROM generate_series(1, 3000000);`;
-    await client.query(insertQuery);
-
-    if (!fs.existsSync("./output")) {
-      fs.mkdirSync("./output");
-    }
-
-    await withTransaction(client, "./output/withTransaction.csv");
-    await withoutTransaction(client, "./output/withoutTransaction.csv");
-    await withStream(client, "./output/stream.csv");
-
-    process.env.IS_DOCKER || client.end();
+    //  t->c->cm->s
+    client.end();
     console.log("done");
+
+    // * if the process is running in docker it will keep the process running
+    process.env.IS_DOCKER ? process.stdin.resume() : null;
   } catch (error) {
+    console.error("ts");
     console.error(error);
+    process.exit(0);
   }
 })();

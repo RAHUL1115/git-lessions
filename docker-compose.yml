@@ -5,11 +5,14 @@ services:
     environment:
       - IS_DOCKER=true
     build: .
-    restart: always
+    restart: on-failure
     depends_on:
-      - pg
+      pg:
+        condition: service_healthy
 
   pg:
+    env_file:
+      - local.env
     container_name: postgres
     image: postgres
     ports:
@@ -17,3 +20,8 @@ services:
     environment:
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=${DB_NAME}
+    healthcheck:
+      test: pg_isready -U ${DB_USER}
+      interval: 1s
+      timeout: 3s
+      retries: 3
